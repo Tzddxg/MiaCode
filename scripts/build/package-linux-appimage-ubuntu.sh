@@ -21,8 +21,13 @@ export DEBIAN_FRONTEND=noninteractive
 
 install_sys_deps() {
   if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -y
-    apt-get install -y \
+    # GitHub runners and non-root shells need sudo for apt operations.
+    local sudo=""
+    if [[ "$(id -u)" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
+      sudo="sudo"
+    fi
+    $sudo apt-get update -y
+    $sudo apt-get install -y \
       build-essential \
       cmake \
       ninja-build \
