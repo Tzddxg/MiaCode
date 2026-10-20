@@ -38,6 +38,7 @@ install_sys_deps() {
       wget \
       patchelf \
       file \
+      imagemagick \
       python3 \
       python3-venv \
       libgl1-mesa-dev \
@@ -268,8 +269,18 @@ done
 [[ -d "$ROOT_DIR/licenses" ]] && cp -R "$ROOT_DIR/licenses" "$DIST_DIR/licenses"
 
 ICON_SOURCE="$ROOT_DIR/resources/icons/app.png"
+ICON_TARGET="$APPDIR/usr/share/icons/hicolor/512x512/apps/miacode.png"
 if [[ -f "$ICON_SOURCE" ]]; then
-  cp "$ICON_SOURCE" "$APPDIR/usr/share/icons/hicolor/512x512/apps/miacode.png"
+  # linuxdeploy validates that a "512x512" icon really is 512 pixels wide, and
+  # the source asset is 2048x2048, so scaling is mandatory rather than cosmetic.
+  if command -v magick >/dev/null 2>&1; then
+    magick "$ICON_SOURCE" -resize 512x512 "$ICON_TARGET"
+  elif command -v convert >/dev/null 2>&1; then
+    convert "$ICON_SOURCE" -resize 512x512 "$ICON_TARGET"
+  else
+    echo "ImageMagick not found; using icon source without scaling" >&2
+    cp "$ICON_SOURCE" "$ICON_TARGET"
+  fi
 fi
 
 cat > "$APPDIR/usr/share/applications/miacode.desktop" <<'EOF'
