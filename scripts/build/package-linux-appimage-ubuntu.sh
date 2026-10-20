@@ -42,8 +42,12 @@ install_sys_deps() {
       python3-venv \
       libgl1-mesa-dev \
       libegl1-mesa-dev \
+      libxkbcommon-dev \
       libxkbcommon-x11-0 \
+      libxkbcommon-x11-dev \
       libxcb-cursor0 \
+      libxcb-cursor-dev \
+      libxcb-xkb-dev \
       libxcb-xinerama0 \
       libxcb-randr0 \
       libxcb-keysyms1 \
