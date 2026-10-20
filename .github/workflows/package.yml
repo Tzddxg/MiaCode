@@ -229,12 +229,19 @@ jobs:
         run: |
           if [ "${{ startsWith(matrix.platform, 'linux') }}" = "true" ]; then
             # The AppImage is written to dist/<package>/ by the packaging script.
-            APPIMAGE="$(ls dist/*/*.AppImage dist/*.AppImage 2>/dev/null | head -n 1)"
+            echo "Contents of dist/:"
+            find dist -maxdepth 2 -name '*.AppImage' -print 2>/dev/null || true
+            APPIMAGE=""
+            while IFS= read -r candidate; do
+              APPIMAGE="$candidate"
+              break
+            done < <(find dist -name '*.AppImage' -type f 2>/dev/null)
             if [ -z "$APPIMAGE" ]; then
               echo "No AppImage found under dist/" >&2
               exit 1
             fi
             echo "name=$(basename "$APPIMAGE")" >> "$GITHUB_OUTPUT"
+            echo "Artifact name: $(basename "$APPIMAGE")"
           else
             python scripts/build/package.py artifact
           fi
