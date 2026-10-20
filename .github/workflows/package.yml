@@ -266,18 +266,13 @@ jobs:
         id: artifact
         run: |
           if [ "${{ startsWith(matrix.platform, 'linux') }}" = "true" ]; then
-            # Find AppImage
-            APPIMAGE=$(ls dist/*/*.AppImage dist/*.AppImage 2>/dev/null | head -n 1)
-            if [ -n "$APPIMAGE" ]; then
-              echo "name=$(basename $APPIMAGE)" >> $GITHUB_OUTPUT
-            else
-              # Try to construct name
-              python3 -c "
-import os, sys, subprocess
-# Just get version
-" 2>&1 | tail -2
-              echo "name=MiaCode-$(date +%Y%m%d)-linux-x64.AppImage" >> $GITHUB_OUTPUT
+            # The AppImage is written to dist/<package>/ by the packaging script.
+            APPIMAGE="$(ls dist/*/*.AppImage dist/*.AppImage 2>/dev/null | head -n 1)"
+            if [ -z "$APPIMAGE" ]; then
+              echo "No AppImage found under dist/" >&2
+              exit 1
             fi
+            echo "name=$(basename "$APPIMAGE")" >> "$GITHUB_OUTPUT"
           else
             python scripts/build/package.py artifact
           fi
