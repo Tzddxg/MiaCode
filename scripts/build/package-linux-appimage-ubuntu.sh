@@ -90,11 +90,25 @@ ensure_aqt() {
   echo "$venv/bin/aqt"
 }
 
+export_qt_env() {
+  # linuxdeploy-plugin-qt locates Qt through qmake, and the build tools
+  # (qmake, moc, rcc, uic) must resolve to this Qt, not a system Qt5.
+  local qt_prefix="$1"
+  export QT_ROOT_DIR="$qt_prefix"
+  export QT_ROOT="$qt_prefix"
+  export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-$qt_prefix}"
+  if [[ -x "$qt_prefix/bin/qmake6" ]]; then
+    export QMAKE="$qt_prefix/bin/qmake6"
+  elif [[ -x "$qt_prefix/bin/qmake" ]]; then
+    export QMAKE="$qt_prefix/bin/qmake"
+  fi
+  export PATH="$qt_prefix/bin:$PATH"
+}
+
 ensure_qt() {
   if [[ -n "$QT_ROOT" && -d "$QT_ROOT" && (-x "$QT_ROOT/bin/qmake6" || -x "$QT_ROOT/bin/qmake") ]]; then
     echo "Using existing Qt at $QT_ROOT"
-    export QT_ROOT_DIR="$QT_ROOT"
-    export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-$QT_ROOT}"
+    export_qt_env "$QT_ROOT"
     return
   fi
   local aqt_bin
@@ -105,9 +119,7 @@ ensure_qt() {
   else
     "$aqt_bin" install-qt linux desktop 6.11.1 linux_gcc_64 --outputdir "$ROOT_DIR/.qt" --modules qtmultimedia qtshadertools
   fi
-  export QT_ROOT_DIR="$QT_ROOT"
-  export QT_ROOT="$QT_ROOT"
-  export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-$QT_ROOT}"
+  export_qt_env "$QT_ROOT"
 }
 
 ensure_ffmpeg() {
@@ -282,6 +294,9 @@ LINUXDEPLOY_BIN="$(command -v linuxdeploy || echo "$HOME/.local/bin/linuxdeploy"
 APPIMAGETOOL_BIN="$(command -v appimagetool || echo "$HOME/.local/bin/appimagetool")"
 
 export APPIMAGE_EXTRACT_AND_RUN=1
+if [[ -n "${QMAKE:-}" ]]; then
+  export QMAKE
+fi
 
 "$LINUXDEPLOY_BIN" \
   --appdir="$APPDIR" \
