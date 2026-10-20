@@ -1,0 +1,316 @@
+name: Nightly
+run-name: ${{ inputs.channel || 'nightly' }} · ${{ github.ref_name }} · ${{ github.sha }}
+
+on:
+  push:
+    branches: [dev, feature/qml-ui, ci/platform-package-refactor]
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      channel:
+        description: >-
+          Distribution channel embedded in the application and package name.
+          "release" omits the channel segment from the package name.
+        type: string
+        default: nightly
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: platform-packages-${{ github.ref }}-${{ inputs.channel || 'nightly' }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            runner: windows-2022
+            toolchain: msvc
+            build: build-msvc
+            qt: .qt/6.11.1/msvc2022_64
+            media: third_party/ffmpeg/windows/win64
+            version: ffmpeg7.1
+            artifact_ext: 7z
+          - platform: windows-arm64
+            runner: windows-11-arm
+            toolchain: msvc-arm64
+            build: build-msvc-arm64
+            qt: .qt/6.11.1/msvc2022_arm64
+            media: third_party/ffmpeg/windows/winarm64
+            version: ffmpeg8.1.2
+            artifact_ext: 7z
+          - platform: macos-arm64
+            runner: macos-14
+            toolchain: apple-clang
+            build: build-macos
+            qt: .qt/6.11.1
+            media: third_party/ffmpeg/macos
+            version: ffmpeg8.1.2
+            artifact_ext: 7z
+          - platform: linux-x64
+            runner: ubuntu-22.04
+            toolchain: gcc
+            build: build-linux
+            qt: .qt/6.11.1/gcc_64
+            media: third_party/ffmpeg/linux
+            version: ffmpeg7.1
+            artifact_ext: AppImage
+    defaults:
+      run:
+        shell: bash
+    env:
+      CI_CHANNEL: ${{ inputs.channel || 'nightly' }}
+      MIACODE_RELEASE_CHANNEL: ${{ inputs.channel || 'nightly' }}
+      GIT_LFS_SKIP_SMUDGE: "1"
+      SCCACHE_DIR: ${{ github.workspace }}/.cache/sccache
+      CMAKE_C_COMPILER_LAUNCHER: sccache
+      CMAKE_CXX_COMPILER_LAUNCHER: sccache
+      CMAKE_OSX_ARCHITECTURES: arm64
+      CMAKE_OSX_DEPLOYMENT_TARGET: "13.0"
+      SCCACHE_IDLE_TIMEOUT: "0"
+      CI_PLATFORM: ${{ matrix.platform }}
+      CI_BUILD_DIR: ${{ matrix.build }}
+    steps:
+      - name: Start timing
+        run: echo "CI_STARTED_AT=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Package channel
+        run: |
+          # "release" means no channel segment at all: a Release asset is
+          # MiaCode_<version>_<os>_<arch>.7z, with nothing in between.
+          value="$CI_CHANNEL"
+          if [[ "$value" == "release" ]]; then
+            value=""
+          fi
+          echo "MIACODE_PACKAGE_CHANNEL=$value" >> "$GITHUB_ENV"
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          lfs: false
+
+      - name: Cache keys
+        id: keys
+        run: python scripts/build/package.py keys
+
+      # The channel is part of the key because it changes the archive name a
+      # cache hit restores, and a release must never hand out a nightly-named
+      # package built from the same source.
+      - name: Restore package
+        id: package-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            dist/*.7z
+            dist/*/*.AppImage
+            dist/*.AppImage
+          key: platform-v1-package-${{ matrix.platform }}-${{ env.CI_CHANNEL }}-${{ steps.keys.outputs.source }}
+
+      - name: Fetch assets
+        if: steps.package-cache.outputs.cache-hit != 'true'
+        run: |
+          git lfs pull
+          git submodule update --init --recursive
+
+      - name: Restore Qt
+        if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == false
+        id: qt-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ matrix.qt }}
+          key: platform-v1-qt-${{ matrix.platform }}-6.11.1-${{ steps.keys.outputs.recipe }}
+          restore-keys: platform-v1-qt-${{ matrix.platform }}-
+
+      - name: Setup Linux Qt
+        if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1-mesa-dev libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 \
+            libpulse-dev libasound2-dev libssl-dev patchelf imagemagick wget fuse libfuse2
+          python3 -m pip install --user aqtinstall
+          python3 -m aqt install-qt linux desktop 6.11.1 gcc_64 --outputdir $GITHUB_WORKSPACE/.qt
+
+      - name: Restore FFmpeg
+        if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == false
+        id: media-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ matrix.media }}
+          key: platform-v1-media-${{ matrix.platform }}-${{ matrix.version }}-${{ steps.keys.outputs.recipe }}
+          restore-keys: |
+            platform-v1-media-${{ matrix.platform }}-${{ matrix.version }}-
+            platform-v1-media-${{ matrix.platform }}-
+
+      - name: Restore compiler
+        if: steps.package-cache.outputs.cache-hit != 'true'
+        id: compiler-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .cache/sccache
+          key: platform-v1-compiler-${{ matrix.platform }}-${{ steps.keys.outputs.toolchain }}-${{ steps.keys.outputs.source }}
+          restore-keys: |
+            platform-v1-compiler-${{ matrix.platform }}-${{ steps.keys.outputs.toolchain }}-
+            platform-v1-compiler-${{ matrix.platform }}-
+
+      - name: Restore build
+        if: steps.package-cache.outputs.cache-hit != 'true'
+        id: build-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ matrix.build }}
+          key: platform-v1-build-${{ matrix.platform }}-${{ steps.keys.outputs.toolchain }}-${{ steps.keys.outputs.source }}
+          restore-keys: |
+            platform-v1-build-${{ matrix.platform }}-${{ steps.keys.outputs.toolchain }}-
+            platform-v1-build-${{ matrix.platform }}-
+
+      - name: Compiler cache
+        if: steps.package-cache.outputs.cache-hit != 'true'
+        uses: mozilla-actions/sccache-action@v0.0.9
+        with:
+          version: v0.17.0
+          disable_annotations: true
+
+      - name: Dependencies
+        if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == false
+        id: deps
+        run: python scripts/build/package.py deps
+
+      - name: Setup Linux build tools
+        if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == true
+        run: |
+          sudo apt-get install -y cmake ninja-build libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 libxcb-xinerama0 libpulse-dev \
+            libasound2-dev libssl-dev patchelf imagemagick fuse libfuse2 file curl xz-utils wget
+          # Install linuxdeploy and appimagetool
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20250213-2/linuxdeploy-x86_64.AppImage -O /tmp/linuxdeploy.AppImage
+          chmod +x /tmp/linuxdeploy.AppImage
+          /tmp/linuxdeploy.AppImage --appimage-extract
+          sudo mv squashfs-root/usr/bin/linuxdeploy /usr/local/bin/linuxdeploy 2>/dev/null || sudo cp squashfs-root/usr/bin/* /usr/local/bin/ 2>/dev/null || true
+          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage -O /tmp/linuxdeploy-plugin-qt.AppImage
+          chmod +x /tmp/linuxdeploy-plugin-qt.AppImage
+          /tmp/linuxdeploy-plugin-qt.AppImage --appimage-extract
+          sudo cp squashfs-root/usr/bin/* /usr/local/bin/ 2>/dev/null || true
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool.AppImage
+          chmod +x /tmp/appimagetool.AppImage
+          /tmp/appimagetool.AppImage --appimage-extract
+          sudo cp squashfs-root/usr/bin/appimagetool /usr/local/bin/ 2>/dev/null || true
+          rm -rf squashfs-root /tmp/*.AppImage
+
+      - name: Prepare Linux ffmpeg
+        if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == true
+        run: |
+          git lfs pull || true
+          git submodule update --init --recursive || true
+          bash scripts/ffmpeg/ensure-linux-ffmpeg.sh
+
+      - name: Save Qt
+        if: startsWith(matrix.platform, 'linux') == false && steps.deps.outcome == 'success' && steps.qt-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ matrix.qt }}
+          key: platform-v1-qt-${{ matrix.platform }}-6.11.1-${{ steps.keys.outputs.recipe }}
+
+      - name: Save FFmpeg
+        if: startsWith(matrix.platform, 'linux') == false && steps.deps.outcome == 'success' && steps.media-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ matrix.media }}
+          key: platform-v1-media-${{ matrix.platform }}-${{ matrix.version }}-${{ steps.keys.outputs.recipe }}
+
+      - name: Build
+        if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == false
+        id: build
+        run: python scripts/build/package.py build
+
+      - name: Build Linux AppImage
+        if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == true
+        id: build-linux
+        env:
+          QT_ROOT: ${{ github.workspace }}/.qt/6.11.1/gcc_64
+          QT_ROOT_DIR: ${{ github.workspace }}/.qt/6.11.1/gcc_64
+          CMAKE_PREFIX_PATH: ${{ github.workspace }}/.qt/6.11.1/gcc_64
+          PATH: ${{ github.workspace }}/.qt/6.11.1/gcc_64/bin:/usr/local/bin:${{ env.PATH }}
+          APPIMAGE_EXTRACT_AND_RUN: 1
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          export QMAKE=${{ github.workspace }}/.qt/6.11.1/gcc_64/bin/qmake6
+          chmod +x scripts/build/package-linux-appimage-ubuntu.sh
+          bash scripts/build/package-linux-appimage-ubuntu.sh
+
+      - name: Flush compiler
+        if: steps.build.outcome == 'success' || steps.build-linux.outcome == 'success'
+        run: sccache --stop-server || true
+
+      - name: Save compiler
+        if: (steps.build.outcome == 'success' || steps.build-linux.outcome == 'success') && steps.compiler-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == false
+        uses: actions/cache/save@v6
+        with:
+          path: .cache/sccache
+          key: platform-v1-compiler-${{ matrix.platform }}-${{ steps.keys.outputs.toolchain }}-${{ steps.keys.outputs.source }}
+
+      - name: Save build
+        if: steps.build.outcome == 'success' && steps.build-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == false
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ matrix.build }}
+          key: platform-v1-build-${{ matrix.platform }}-${{ steps.keys.outputs.toolchain }}-${{ steps.keys.outputs.source }}
+
+      - name: Artifact name
+        id: artifact
+        run: |
+          if [ "${{ startsWith(matrix.platform, 'linux') }}" = "true" ]; then
+            # Find AppImage
+            APPIMAGE=$(ls dist/*/*.AppImage dist/*.AppImage 2>/dev/null | head -n 1)
+            if [ -n "$APPIMAGE" ]; then
+              echo "name=$(basename $APPIMAGE)" >> $GITHUB_OUTPUT
+            else
+              # Try to construct name
+              python3 -c "
+import os, sys, subprocess
+# Just get version
+" 2>&1 | tail -2
+              echo "name=MiaCode-$(date +%Y%m%d)-linux-x64.AppImage" >> $GITHUB_OUTPUT
+            fi
+          else
+            python scripts/build/package.py artifact
+          fi
+
+      - name: Save package
+        if: steps.package-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            dist/*.7z
+            dist/*/*.AppImage
+            dist/*.AppImage
+          key: ${{ steps.package-cache.outputs.cache-primary-key }}
+
+      - name: Upload
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: |
+            dist/*.7z
+            dist/*/*.AppImage
+            dist/*.AppImage
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Summary
+        env:
+          CI_EVENT: ${{ github.event_name }}
+          CI_TRIGGERED_AT: ${{ github.event.head_commit.timestamp }}
+        run: |
+          if [ "${{ startsWith(matrix.platform, 'linux') }}" = "true" ]; then
+            echo "Linux build completed" >> $GITHUB_STEP_SUMMARY
+          else
+            python scripts/build/package.py report
+          fi
