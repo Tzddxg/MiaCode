@@ -1621,6 +1621,10 @@ Failed: %2</source>
         <source>SD</source>
         <translation>SD</translation>
     </message>
+    <message id="dialog.render_settings.video.firework_brightness">
+        <source>Firework brightness</source>
+        <translation>花火の明るさ</translation>
+    </message>
     <message id="dialog.render_settings.video.smooth_brightness">
         <source>Smooth brightness</source>
         <translation>明るさをなめらかに</translation>
@@ -3579,6 +3583,10 @@ The file may be open in preview, a media player, File Explorer preview pane, or 
         <source>Preview rendering mode</source>
         <translation>プレビューレンダリングモード</translation>
     </message>
+    <message id="menu.preview_rendering_mode">
+        <source>Rendering Mode</source>
+        <translation>レンダリングモード</translation>
+    </message>
     <message id="qml.open_simai_file">
         <source>Open Simai file</source>
         <translation>Simai ファイルを開く</translation>
@@ -3742,6 +3750,14 @@ The file may be open in preview, a media player, File Explorer preview pane, or 
     <message id="qml.timeline_zoom">
         <source>Timeline zoom</source>
         <translation>タイムラインの拡大率</translation>
+    </message>
+    <message id="qml.zoom_in">
+        <source>Zoom in</source>
+        <translation>拡大</translation>
+    </message>
+    <message id="qml.zoom_out">
+        <source>Zoom out</source>
+        <translation>縮小</translation>
     </message>
     <message id="qml.title_font_preview">
         <source>Title-font preview</source>
@@ -4777,10 +4793,6 @@ Error: %1</source>
         <source>Set to current value</source>
         <translation>現在値に設定</translation>
     </message>
-    <message id="dialog.video_export.range.play_clip">
-        <source>Play Range</source>
-        <translation>範囲を再生</translation>
-    </message>
     <message id="dialog.video_export.output_mode">
         <source>Output Format</source>
         <translation>出力形式</translation>
@@ -4805,82 +4817,64 @@ Error: %1</source>
         <source>The prepended PV exceeds its size budget or the 20 MB limit.</source>
         <translation>黒画面を追加した PV がサイズ予算または 20 MB の上限を超えています。</translation>
     </message>
-</context>
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-<context>
-    <name>BatchCoverExport</name>
-    <message id="dialog.batch_export.cover_preset">
-        <source>Cover preset</source>
-        <translation>カバープリセット</translation>
-    </message>
-    <message id="dialog.batch_export.cover_none">
-        <source>Cover export off</source>
-        <translation>カバー出力をオフ</translation>
-    </message>
-    <message id="dialog.batch_export.cover_summary">
-        <source>Covers: %1 succeeded, %2 failed</source>
-        <translation>カバー出力：成功 %1 件、失敗 %2 件</translation>
-    </message>
-    <message id="dialog.batch_export.cover_preset_unavailable">
-        <source>The cover preset cannot be applied to this chart</source>
-        <translation>この譜面にカバープリセットを適用できません</translation>
-    </message>
-    <message id="dialog.batch_export.cover_frame_adjusted">
-        <source>%1: frame time adjusted from %2 s to %3 s</source>
-        <translation>%1：フレーム時間を %2 秒から %3 秒に調整</translation>
+    <message id="file_picker.native_failed">
+        <source>Could not open the system folder picker.</source>
+        <translation>システムのフォルダー選択画面を開けませんでした。</translation>
     </message>
 </context>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 </TS>
