@@ -168,15 +168,23 @@ ensure_linuxdeploy_plugin_qt() {
 }
 
 ensure_appimagetool() {
+  local tool="$HOME/.local/bin/appimagetool"
   mkdir -p "$HOME/.local/bin"
-  if [[ -x "$HOME/.local/bin/appimagetool" ]]; then
-    chmod +x "$HOME/.local/bin/appimagetool"
-    echo "$HOME/.local/bin/appimagetool"
+  # The old AppImageKit "13" asset was removed upstream and now returns a plain
+  # "Not Found" body that fails to execute; the maintained repo hosts the binary.
+  if [[ -x "$tool" ]] && head -c 4 "$tool" 2>/dev/null | grep -q ELF; then
+    chmod +x "$tool"
+    echo "$tool"
     return
   fi
-  curl -L --retry 3 -o "$HOME/.local/bin/appimagetool" "https://github.com/AppImage/AppImageKit/releases/download/13/appimagetool-x86_64.AppImage"
-  chmod +x "$HOME/.local/bin/appimagetool"
-  echo "$HOME/.local/bin/appimagetool"
+  rm -f "$tool"
+  curl -L --retry 3 -o "$tool" "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+  if ! head -c 4 "$tool" 2>/dev/null | grep -q ELF; then
+    echo "Failed to download a valid appimagetool from $tool" >&2
+    return 1
+  fi
+  chmod +x "$tool"
+  echo "$tool"
 }
 
 export PATH="$HOME/.local/bin:$PATH"
@@ -193,9 +201,25 @@ deploy_qml_modules() {
   local sources="$3"
 
   local scanner=""
-  if [[ -n "${QT_ROOT:-}" && -x "$QT_ROOT/bin/qmlimportscanner" ]]; then
-    scanner="$QT_ROOT/bin/qmlimportscanner"
-  elif command -v qmlimportscanner >/dev/null 2>&1; then
+  # aqt Qt ships qmlimportscanner under libexec/ rather than bin/, so probe both
+  # (plus QT_INSTALL_LIBEXECS) before giving up on explicit QML deployment.
+  local scanner_dirs=()
+  if [[ -n "${QT_ROOT:-}" ]]; then
+    scanner_dirs+=("$QT_ROOT/bin" "$QT_ROOT/libexec")
+  fi
+  if [[ -n "${QMAKE:-}" ]]; then
+    local libexecs
+    libexecs="$("$QMAKE" -query QT_INSTALL_LIBEXECS 2>/dev/null || true)"
+    [[ -n "$libexecs" ]] && scanner_dirs+=("$libexecs")
+  fi
+  local dir
+  for dir in "${scanner_dirs[@]}"; do
+    if [[ -x "$dir/qmlimportscanner" ]]; then
+      scanner="$dir/qmlimportscanner"
+      break
+    fi
+  done
+  if [[ -z "$scanner" ]] && command -v qmlimportscanner >/dev/null 2>&1; then
     scanner="$(command -v qmlimportscanner)"
   fi
   if [[ -z "$scanner" ]]; then
