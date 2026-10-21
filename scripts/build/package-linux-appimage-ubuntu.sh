@@ -339,9 +339,11 @@ elif [[ -d "$ROOT_DIR/assets" ]]; then
   cp -R "$ROOT_DIR/assets" "$APPDIR/usr/share/"
 fi
 
-# Copy BASS shared libraries placed next to the binary by CMake
+# Copy BASS shared libraries next to the binary (the app checks runtimeFilePath
+# relative to applicationDirPath()) and into the library dir for the dynamic linker.
 for lib in "$BUILD_DIR/bin"/libbass*.so*; do
   [[ -e "$lib" ]] || continue
+  cp -L "$lib" "$APPDIR/usr/bin/" 2>/dev/null || true
   cp -L "$lib" "$APPDIR/usr/lib/" 2>/dev/null || true
 done
 
