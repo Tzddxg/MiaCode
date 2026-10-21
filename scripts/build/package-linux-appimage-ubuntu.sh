@@ -231,18 +231,22 @@ deploy_qml_modules() {
     return 0
   fi
 
-  local imports
-  imports="$("$scanner" -rootPath "$sources" -importPath "$qml_root" 2>/dev/null || true)"
-
   local relative
-  while IFS= read -r relative; do
-    [[ -n "$relative" ]] || continue
-    local module_src="$qml_root/$relative"
-    local module_dst="$appdir/usr/qml/$relative"
-    [[ -d "$module_src" ]] || continue
-    mkdir -p "$(dirname "$module_dst")"
-    cp -R "$module_src" "$module_dst"
-  done < <(printf '%s' "$imports" | python3 -c '
+  local source_dir
+  while IFS= read -r source_dir; do
+    [[ -d "$source_dir" ]] || continue
+    local scanned
+    scanned="$("$scanner" -rootPath "$source_dir" -importPath "$qml_root" 2>/dev/null || true)"
+    [[ -n "$scanned" ]] || continue
+    while IFS= read -r relative; do
+      [[ -n "$relative" ]] || continue
+      local module_src="$qml_root/$relative"
+      local module_dst="$appdir/usr/qml/$relative"
+      [[ -d "$module_src" ]] || continue
+      [[ -e "$module_dst" ]] && continue
+      mkdir -p "$(dirname "$module_dst")"
+      cp -R "$module_src" "$module_dst"
+    done < <(printf '%s' "$scanned" | python3 -c '
 import json, sys
 
 try:
@@ -256,6 +260,7 @@ for entry in entries:
         seen.add(relative)
         print(relative)
 ')
+  done < <(printf '%s' "$sources" | tr ':' '\n')
 }
 
 install_sys_deps
@@ -384,16 +389,39 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 if [[ -n "${QMAKE:-}" ]]; then
   export QMAKE
 fi
-# The Qt plugin only deploys the QML modules it can see imports for. Point it at
-# the QML sources so QtQuick.Controls/Window/etc. are bundled into the AppDir;
-# without this the AppImage starts with "module not installed" errors.
-export QML_SOURCES_PATHS="$ROOT_DIR/src"
+
+# linuxdeploy's bundled strip predates RELR sections and aborts on libraries
+# from a recent toolchain; rpath rewriting with the bundled patchelf corrupts
+# some modern libraries. Use the system patchelf and skip stripping.
+export NO_STRIP="${NO_STRIP:-1}"
+if [[ -z "${PATCHELF:-}" ]] && command -v patchelf >/dev/null 2>&1; then
+  export PATCHELF="$(command -v patchelf)"
+fi
+
+# The application embeds its own QML in Qt resources, so the plugin cannot find
+# imports by scanning the AppDir; point it at the source trees instead.
+export QML_SOURCES_PATHS="${QML_SOURCES_PATHS:-$ROOT_DIR/src/app/ui:$ROOT_DIR/src/intro/qml:$ROOT_DIR/src/preview/stage_media/qml}"
+
+# linuxdeploy's AppRun execs AppRun.wrapped and lets Qt resolve its prefix to
+# the AppDir root, which loses the plugin and QML import paths. Install a custom
+# AppRun that launches the binary with those paths set explicitly.
+cat > "$DIST_DIR/AppRun" <<'EOF'
+#!/usr/bin/env bash
+set -e
+APPDIR="$(dirname "$(readlink -f "$0")")"
+export QT_PLUGIN_PATH="$APPDIR/usr/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"
+export QML_IMPORT_PATH="$APPDIR/usr/qml${QML_IMPORT_PATH:+:$QML_IMPORT_PATH}"
+export QML2_IMPORT_PATH="$APPDIR/usr/qml${QML2_IMPORT_PATH:+:$QML2_IMPORT_PATH}"
+exec "$APPDIR/usr/bin/MiaCode" "$@"
+EOF
+chmod +x "$DIST_DIR/AppRun"
 
 "$LINUXDEPLOY_BIN" \
   --appdir="$APPDIR" \
   --executable="$APPDIR/usr/bin/MiaCode" \
   --desktop-file="$APPDIR/usr/share/applications/miacode.desktop" \
   --icon-file="$APPDIR/usr/share/icons/hicolor/512x512/apps/miacode.png" \
+  --custom-apprun="$DIST_DIR/AppRun" \
   --plugin qt
 
 # The Qt plugin's QML deployment is best-effort; make sure the modules the UI
@@ -405,24 +433,14 @@ elif [[ -n "${QMAKE:-}" ]]; then
   QML_IMPORT_ROOT="$("$QMAKE" -query QT_INSTALL_QML 2>/dev/null || true)"
 fi
 package_step "Deploying QML modules from ${QML_IMPORT_ROOT:-<unknown>}"
-deploy_qml_modules "$APPDIR" "$QML_IMPORT_ROOT" "$ROOT_DIR/src"
+deploy_qml_modules "$APPDIR" "$QML_IMPORT_ROOT" \
+  "$ROOT_DIR/src/app/ui:$ROOT_DIR/src/intro/qml:$ROOT_DIR/src/preview/stage_media/qml"
 
 # Fail loudly here rather than shipping an AppImage that cannot load its UI.
 if [[ ! -d "$APPDIR/usr/qml/QtQuick/Controls" ]]; then
   echo "QML modules were not deployed into the AppDir; the AppImage would fail to start" >&2
   exit 1
 fi
-
-# Point Qt at the bundled QML modules and plugins. linuxdeploy does not always
-# emit a qt.conf, so write one next to the executable; Qt picks it up via the
-# standard executable-relative lookup.
-cat > "$APPDIR/usr/bin/qt.conf" <<'EOF'
-[Paths]
-Prefix = ..
-Plugins = plugins
-Imports = qml
-Qml2Imports = qml
-EOF
 
 package_step "Building AppImage"
 TARGET_APPIMAGE="${DIST_DIR}/${PACKAGE_NAME}.AppImage"
