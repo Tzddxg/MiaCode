@@ -182,6 +182,58 @@ ensure_appimagetool() {
 export PATH="$HOME/.local/bin:$PATH"
 export APPIMAGE_EXTRACT_AND_RUN=1
 
+# linuxdeploy-plugin-qt only bundles QML modules when it can run qmlimportscanner
+# from QT_INSTALL_BINS, which fails on distributions that ship the scanner
+# elsewhere. Deploy the modules deterministically instead of trusting the plugin:
+# scan the QML sources for imports and copy every resolved module out of
+# QT_INSTALL_QML into the AppDir.
+deploy_qml_modules() {
+  local appdir="$1"
+  local qml_root="$2"
+  local sources="$3"
+
+  local scanner=""
+  if [[ -n "${QT_ROOT:-}" && -x "$QT_ROOT/bin/qmlimportscanner" ]]; then
+    scanner="$QT_ROOT/bin/qmlimportscanner"
+  elif command -v qmlimportscanner >/dev/null 2>&1; then
+    scanner="$(command -v qmlimportscanner)"
+  fi
+  if [[ -z "$scanner" ]]; then
+    echo "qmlimportscanner not found; skipping explicit QML module deployment" >&2
+    return 0
+  fi
+  if [[ ! -d "$qml_root" ]]; then
+    echo "Qt QML import path not found at $qml_root; skipping QML deployment" >&2
+    return 0
+  fi
+
+  local imports
+  imports="$("$scanner" -rootPath "$sources" -importPath "$qml_root" 2>/dev/null || true)"
+
+  local relative
+  while IFS= read -r relative; do
+    [[ -n "$relative" ]] || continue
+    local module_src="$qml_root/$relative"
+    local module_dst="$appdir/usr/qml/$relative"
+    [[ -d "$module_src" ]] || continue
+    mkdir -p "$(dirname "$module_dst")"
+    cp -R "$module_src" "$module_dst"
+  done < <(printf '%s' "$imports" | python3 -c '
+import json, sys
+
+try:
+    entries = json.load(sys.stdin)
+except json.JSONDecodeError:
+    sys.exit(0)
+seen = set()
+for entry in entries:
+    relative = entry.get("relativePath")
+    if relative and relative not in seen:
+        seen.add(relative)
+        print(relative)
+')
+}
+
 install_sys_deps
 ensure_qt
 ensure_ffmpeg
@@ -308,33 +360,50 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 if [[ -n "${QMAKE:-}" ]]; then
   export QMAKE
 fi
+# The Qt plugin only deploys the QML modules it can see imports for. Point it at
+# the QML sources so QtQuick.Controls/Window/etc. are bundled into the AppDir;
+# without this the AppImage starts with "module not installed" errors.
+export QML_SOURCES_PATHS="$ROOT_DIR/src"
 
 "$LINUXDEPLOY_BIN" \
   --appdir="$APPDIR" \
   --executable="$APPDIR/usr/bin/MiaCode" \
   --desktop-file="$APPDIR/usr/share/applications/miacode.desktop" \
   --icon-file="$APPDIR/usr/share/icons/hicolor/512x512/apps/miacode.png" \
-  --plugin qt \
-  --output appimage
+  --plugin qt
 
-APPIMAGE_OUTPUT=""
-for candidate in "$ROOT_DIR"/MiaCode-*.AppImage "$(pwd)"/MiaCode-*.AppImage "$DIST_DIR"/../MiaCode-*.AppImage; do
-  if [[ -f "$candidate" ]]; then
-    APPIMAGE_OUTPUT="$candidate"
-    break
-  fi
-done
-if [[ -z "$APPIMAGE_OUTPUT" ]]; then
-  APPIMAGE_OUTPUT="$(find "$ROOT_DIR" "$PWD" -name "MiaCode-*.AppImage" 2>/dev/null | head -n 1 || true)"
+# The Qt plugin's QML deployment is best-effort; make sure the modules the UI
+# imports actually made it in, regardless of what the plugin decided to do.
+QML_IMPORT_ROOT=""
+if [[ -n "${QT_ROOT:-}" && -d "$QT_ROOT/qml" ]]; then
+  QML_IMPORT_ROOT="$QT_ROOT/qml"
+elif [[ -n "${QMAKE:-}" ]]; then
+  QML_IMPORT_ROOT="$("$QMAKE" -query QT_INSTALL_QML 2>/dev/null || true)"
+fi
+package_step "Deploying QML modules from ${QML_IMPORT_ROOT:-<unknown>}"
+deploy_qml_modules "$APPDIR" "$QML_IMPORT_ROOT" "$ROOT_DIR/src"
+
+# Fail loudly here rather than shipping an AppImage that cannot load its UI.
+if [[ ! -d "$APPDIR/usr/qml/QtQuick/Controls" ]]; then
+  echo "QML modules were not deployed into the AppDir; the AppImage would fail to start" >&2
+  exit 1
 fi
 
+# Point Qt at the bundled QML modules and plugins. linuxdeploy does not always
+# emit a qt.conf, so write one next to the executable; Qt picks it up via the
+# standard executable-relative lookup.
+cat > "$APPDIR/usr/bin/qt.conf" <<'EOF'
+[Paths]
+Prefix = ..
+Plugins = plugins
+Imports = qml
+Qml2Imports = qml
+EOF
+
+package_step "Building AppImage"
 TARGET_APPIMAGE="${DIST_DIR}/${PACKAGE_NAME}.AppImage"
 mkdir -p "$(dirname "$TARGET_APPIMAGE")"
-if [[ -n "$APPIMAGE_OUTPUT" && -f "$APPIMAGE_OUTPUT" ]]; then
-  mv "$APPIMAGE_OUTPUT" "$TARGET_APPIMAGE"
-else
-  "$APPIMAGETOOL_BIN" "$APPDIR" "$TARGET_APPIMAGE"
-fi
+"$APPIMAGETOOL_BIN" "$APPDIR" "$TARGET_APPIMAGE"
 chmod +x "$TARGET_APPIMAGE"
 
 package_step "Packaging complete"
