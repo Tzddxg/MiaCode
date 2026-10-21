@@ -21,8 +21,13 @@ export DEBIAN_FRONTEND=noninteractive
 
 install_sys_deps() {
   if command -v apt-get >/dev/null 2>&1; then
-    apt-get update -y
-    apt-get install -y \
+    # GitHub runners and non-root shells need sudo for apt operations.
+    local sudo=""
+    if [[ "$(id -u)" -ne 0 ]] && command -v sudo >/dev/null 2>&1; then
+      sudo="sudo"
+    fi
+    $sudo apt-get update -y
+    $sudo apt-get install -y \
       build-essential \
       cmake \
       ninja-build \
@@ -33,12 +38,17 @@ install_sys_deps() {
       wget \
       patchelf \
       file \
+      imagemagick \
       python3 \
       python3-venv \
       libgl1-mesa-dev \
       libegl1-mesa-dev \
+      libxkbcommon-dev \
       libxkbcommon-x11-0 \
+      libxkbcommon-x11-dev \
       libxcb-cursor0 \
+      libxcb-cursor-dev \
+      libxcb-xkb-dev \
       libxcb-xinerama0 \
       libxcb-randr0 \
       libxcb-keysyms1 \
@@ -81,11 +91,25 @@ ensure_aqt() {
   echo "$venv/bin/aqt"
 }
 
+export_qt_env() {
+  # linuxdeploy-plugin-qt locates Qt through qmake, and the build tools
+  # (qmake, moc, rcc, uic) must resolve to this Qt, not a system Qt5.
+  local qt_prefix="$1"
+  export QT_ROOT_DIR="$qt_prefix"
+  export QT_ROOT="$qt_prefix"
+  export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-$qt_prefix}"
+  if [[ -x "$qt_prefix/bin/qmake6" ]]; then
+    export QMAKE="$qt_prefix/bin/qmake6"
+  elif [[ -x "$qt_prefix/bin/qmake" ]]; then
+    export QMAKE="$qt_prefix/bin/qmake"
+  fi
+  export PATH="$qt_prefix/bin:$PATH"
+}
+
 ensure_qt() {
   if [[ -n "$QT_ROOT" && -d "$QT_ROOT" && (-x "$QT_ROOT/bin/qmake6" || -x "$QT_ROOT/bin/qmake") ]]; then
     echo "Using existing Qt at $QT_ROOT"
-    export QT_ROOT_DIR="$QT_ROOT"
-    export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-$QT_ROOT}"
+    export_qt_env "$QT_ROOT"
     return
   fi
   local aqt_bin
@@ -96,9 +120,7 @@ ensure_qt() {
   else
     "$aqt_bin" install-qt linux desktop 6.11.1 linux_gcc_64 --outputdir "$ROOT_DIR/.qt" --modules qtmultimedia qtshadertools
   fi
-  export QT_ROOT_DIR="$QT_ROOT"
-  export QT_ROOT="$QT_ROOT"
-  export CMAKE_PREFIX_PATH="${CMAKE_PREFIX_PATH:-$QT_ROOT}"
+  export_qt_env "$QT_ROOT"
 }
 
 ensure_ffmpeg() {
@@ -159,6 +181,58 @@ ensure_appimagetool() {
 
 export PATH="$HOME/.local/bin:$PATH"
 export APPIMAGE_EXTRACT_AND_RUN=1
+
+# linuxdeploy-plugin-qt only bundles QML modules when it can run qmlimportscanner
+# from QT_INSTALL_BINS, which fails on distributions that ship the scanner
+# elsewhere. Deploy the modules deterministically instead of trusting the plugin:
+# scan the QML sources for imports and copy every resolved module out of
+# QT_INSTALL_QML into the AppDir.
+deploy_qml_modules() {
+  local appdir="$1"
+  local qml_root="$2"
+  local sources="$3"
+
+  local scanner=""
+  if [[ -n "${QT_ROOT:-}" && -x "$QT_ROOT/bin/qmlimportscanner" ]]; then
+    scanner="$QT_ROOT/bin/qmlimportscanner"
+  elif command -v qmlimportscanner >/dev/null 2>&1; then
+    scanner="$(command -v qmlimportscanner)"
+  fi
+  if [[ -z "$scanner" ]]; then
+    echo "qmlimportscanner not found; skipping explicit QML module deployment" >&2
+    return 0
+  fi
+  if [[ ! -d "$qml_root" ]]; then
+    echo "Qt QML import path not found at $qml_root; skipping QML deployment" >&2
+    return 0
+  fi
+
+  local imports
+  imports="$("$scanner" -rootPath "$sources" -importPath "$qml_root" 2>/dev/null || true)"
+
+  local relative
+  while IFS= read -r relative; do
+    [[ -n "$relative" ]] || continue
+    local module_src="$qml_root/$relative"
+    local module_dst="$appdir/usr/qml/$relative"
+    [[ -d "$module_src" ]] || continue
+    mkdir -p "$(dirname "$module_dst")"
+    cp -R "$module_src" "$module_dst"
+  done < <(printf '%s' "$imports" | python3 -c '
+import json, sys
+
+try:
+    entries = json.load(sys.stdin)
+except json.JSONDecodeError:
+    sys.exit(0)
+seen = set()
+for entry in entries:
+    relative = entry.get("relativePath")
+    if relative and relative not in seen:
+        seen.add(relative)
+        print(relative)
+')
+}
 
 install_sys_deps
 ensure_qt
@@ -247,8 +321,18 @@ done
 [[ -d "$ROOT_DIR/licenses" ]] && cp -R "$ROOT_DIR/licenses" "$DIST_DIR/licenses"
 
 ICON_SOURCE="$ROOT_DIR/resources/icons/app.png"
+ICON_TARGET="$APPDIR/usr/share/icons/hicolor/512x512/apps/miacode.png"
 if [[ -f "$ICON_SOURCE" ]]; then
-  cp "$ICON_SOURCE" "$APPDIR/usr/share/icons/hicolor/512x512/apps/miacode.png"
+  # linuxdeploy validates that a "512x512" icon really is 512 pixels wide, and
+  # the source asset is 2048x2048, so scaling is mandatory rather than cosmetic.
+  if command -v magick >/dev/null 2>&1; then
+    magick "$ICON_SOURCE" -resize 512x512 "$ICON_TARGET"
+  elif command -v convert >/dev/null 2>&1; then
+    convert "$ICON_SOURCE" -resize 512x512 "$ICON_TARGET"
+  else
+    echo "ImageMagick not found; using icon source without scaling" >&2
+    cp "$ICON_SOURCE" "$ICON_TARGET"
+  fi
 fi
 
 cat > "$APPDIR/usr/share/applications/miacode.desktop" <<'EOF'
@@ -273,33 +357,53 @@ LINUXDEPLOY_BIN="$(command -v linuxdeploy || echo "$HOME/.local/bin/linuxdeploy"
 APPIMAGETOOL_BIN="$(command -v appimagetool || echo "$HOME/.local/bin/appimagetool")"
 
 export APPIMAGE_EXTRACT_AND_RUN=1
+if [[ -n "${QMAKE:-}" ]]; then
+  export QMAKE
+fi
+# The Qt plugin only deploys the QML modules it can see imports for. Point it at
+# the QML sources so QtQuick.Controls/Window/etc. are bundled into the AppDir;
+# without this the AppImage starts with "module not installed" errors.
+export QML_SOURCES_PATHS="$ROOT_DIR/src"
 
 "$LINUXDEPLOY_BIN" \
   --appdir="$APPDIR" \
   --executable="$APPDIR/usr/bin/MiaCode" \
   --desktop-file="$APPDIR/usr/share/applications/miacode.desktop" \
   --icon-file="$APPDIR/usr/share/icons/hicolor/512x512/apps/miacode.png" \
-  --plugin qt \
-  --output appimage
+  --plugin qt
 
-APPIMAGE_OUTPUT=""
-for candidate in "$ROOT_DIR"/MiaCode-*.AppImage "$(pwd)"/MiaCode-*.AppImage "$DIST_DIR"/../MiaCode-*.AppImage; do
-  if [[ -f "$candidate" ]]; then
-    APPIMAGE_OUTPUT="$candidate"
-    break
-  fi
-done
-if [[ -z "$APPIMAGE_OUTPUT" ]]; then
-  APPIMAGE_OUTPUT="$(find "$ROOT_DIR" "$PWD" -name "MiaCode-*.AppImage" 2>/dev/null | head -n 1 || true)"
+# The Qt plugin's QML deployment is best-effort; make sure the modules the UI
+# imports actually made it in, regardless of what the plugin decided to do.
+QML_IMPORT_ROOT=""
+if [[ -n "${QT_ROOT:-}" && -d "$QT_ROOT/qml" ]]; then
+  QML_IMPORT_ROOT="$QT_ROOT/qml"
+elif [[ -n "${QMAKE:-}" ]]; then
+  QML_IMPORT_ROOT="$("$QMAKE" -query QT_INSTALL_QML 2>/dev/null || true)"
+fi
+package_step "Deploying QML modules from ${QML_IMPORT_ROOT:-<unknown>}"
+deploy_qml_modules "$APPDIR" "$QML_IMPORT_ROOT" "$ROOT_DIR/src"
+
+# Fail loudly here rather than shipping an AppImage that cannot load its UI.
+if [[ ! -d "$APPDIR/usr/qml/QtQuick/Controls" ]]; then
+  echo "QML modules were not deployed into the AppDir; the AppImage would fail to start" >&2
+  exit 1
 fi
 
+# Point Qt at the bundled QML modules and plugins. linuxdeploy does not always
+# emit a qt.conf, so write one next to the executable; Qt picks it up via the
+# standard executable-relative lookup.
+cat > "$APPDIR/usr/bin/qt.conf" <<'EOF'
+[Paths]
+Prefix = ..
+Plugins = plugins
+Imports = qml
+Qml2Imports = qml
+EOF
+
+package_step "Building AppImage"
 TARGET_APPIMAGE="${DIST_DIR}/${PACKAGE_NAME}.AppImage"
 mkdir -p "$(dirname "$TARGET_APPIMAGE")"
-if [[ -n "$APPIMAGE_OUTPUT" && -f "$APPIMAGE_OUTPUT" ]]; then
-  mv "$APPIMAGE_OUTPUT" "$TARGET_APPIMAGE"
-else
-  "$APPIMAGETOOL_BIN" "$APPDIR" "$TARGET_APPIMAGE"
-fi
+"$APPIMAGETOOL_BIN" "$APPDIR" "$TARGET_APPIMAGE"
 chmod +x "$TARGET_APPIMAGE"
 
 package_step "Packaging complete"

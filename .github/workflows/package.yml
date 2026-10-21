@@ -129,15 +129,6 @@ jobs:
           key: platform-v1-qt-${{ matrix.platform }}-6.11.1-${{ steps.keys.outputs.recipe }}
           restore-keys: platform-v1-qt-${{ matrix.platform }}-
 
-      - name: Setup Linux Qt
-        if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == true
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libgl1-mesa-dev libxcb-xinerama0 libxcb-cursor0 libxkbcommon-x11-0 \
-            libpulse-dev libasound2-dev libssl-dev patchelf imagemagick wget fuse libfuse2
-          python3 -m pip install --user aqtinstall
-          python3 -m aqt install-qt linux desktop 6.11.1 gcc_64 --outputdir $GITHUB_WORKSPACE/.qt
-
       - name: Restore FFmpeg
         if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == false
         id: media-cache
@@ -183,32 +174,8 @@ jobs:
         id: deps
         run: python scripts/build/package.py deps
 
-      - name: Setup Linux build tools
-        if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == true
-        run: |
-          sudo apt-get install -y cmake ninja-build libgl1-mesa-dev libxkbcommon-x11-0 libxcb-cursor0 libxcb-xinerama0 libpulse-dev \
-            libasound2-dev libssl-dev patchelf imagemagick fuse libfuse2 file curl xz-utils wget
-          # Install linuxdeploy and appimagetool
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20250213-2/linuxdeploy-x86_64.AppImage -O /tmp/linuxdeploy.AppImage
-          chmod +x /tmp/linuxdeploy.AppImage
-          /tmp/linuxdeploy.AppImage --appimage-extract
-          sudo mv squashfs-root/usr/bin/linuxdeploy /usr/local/bin/linuxdeploy 2>/dev/null || sudo cp squashfs-root/usr/bin/* /usr/local/bin/ 2>/dev/null || true
-          wget -q https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/1-alpha-20250213-1/linuxdeploy-plugin-qt-x86_64.AppImage -O /tmp/linuxdeploy-plugin-qt.AppImage
-          chmod +x /tmp/linuxdeploy-plugin-qt.AppImage
-          /tmp/linuxdeploy-plugin-qt.AppImage --appimage-extract
-          sudo cp squashfs-root/usr/bin/* /usr/local/bin/ 2>/dev/null || true
-          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool.AppImage
-          chmod +x /tmp/appimagetool.AppImage
-          /tmp/appimagetool.AppImage --appimage-extract
-          sudo cp squashfs-root/usr/bin/appimagetool /usr/local/bin/ 2>/dev/null || true
-          rm -rf squashfs-root /tmp/*.AppImage
-
-      - name: Prepare Linux ffmpeg
-        if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == true
-        run: |
-          git lfs pull || true
-          git submodule update --init --recursive || true
-          bash scripts/ffmpeg/ensure-linux-ffmpeg.sh
+      # Linux system dependencies, Qt, linuxdeploy/appimagetool and the export
+      # FFmpeg are all provisioned by package-linux-appimage-ubuntu.sh itself.
 
       - name: Save Qt
         if: startsWith(matrix.platform, 'linux') == false && steps.deps.outcome == 'success' && steps.qt-cache.outputs.cache-hit != 'true'
@@ -233,14 +200,9 @@ jobs:
         if: steps.package-cache.outputs.cache-hit != 'true' && startsWith(matrix.platform, 'linux') == true
         id: build-linux
         env:
-          QT_ROOT: ${{ github.workspace }}/.qt/6.11.1/gcc_64
-          QT_ROOT_DIR: ${{ github.workspace }}/.qt/6.11.1/gcc_64
-          CMAKE_PREFIX_PATH: ${{ github.workspace }}/.qt/6.11.1/gcc_64
-          PATH: ${{ github.workspace }}/.qt/6.11.1/gcc_64/bin:/usr/local/bin:${{ env.PATH }}
           APPIMAGE_EXTRACT_AND_RUN: 1
           DEBIAN_FRONTEND: noninteractive
         run: |
-          export QMAKE=${{ github.workspace }}/.qt/6.11.1/gcc_64/bin/qmake6
           chmod +x scripts/build/package-linux-appimage-ubuntu.sh
           bash scripts/build/package-linux-appimage-ubuntu.sh
 
@@ -267,12 +229,19 @@ jobs:
         run: |
           if [ "${{ startsWith(matrix.platform, 'linux') }}" = "true" ]; then
             # The AppImage is written to dist/<package>/ by the packaging script.
-            APPIMAGE="$(ls dist/*/*.AppImage dist/*.AppImage 2>/dev/null | head -n 1)"
+            echo "Contents of dist/:"
+            find dist -maxdepth 2 -name '*.AppImage' -print 2>/dev/null || true
+            APPIMAGE=""
+            while IFS= read -r candidate; do
+              APPIMAGE="$candidate"
+              break
+            done < <(find dist -name '*.AppImage' -type f 2>/dev/null)
             if [ -z "$APPIMAGE" ]; then
               echo "No AppImage found under dist/" >&2
               exit 1
             fi
             echo "name=$(basename "$APPIMAGE")" >> "$GITHUB_OUTPUT"
+            echo "Artifact name: $(basename "$APPIMAGE")"
           else
             python scripts/build/package.py artifact
           fi
