@@ -52,10 +52,16 @@ qt_add_executable(MiaCodeBatchCleaner WIN32 MACOSX_BUNDLE
 # Same URI as the application module so the shared components' `import
 # MiaCode.UI` resolves here; a private output directory keeps its qmldir and
 # type info apart from the application's.
+#
+# Both targets use the same URI, so Qt's generated qmldir resource would be
+# named qmake_MiaCode_UI.qrc for either one and the two would overwrite each
+# other (the batch cleaner has no Main type). Ask Qt for a target-specific
+# resource name so the application keeps its own qmldir in the binary.
 qt_add_qml_module(MiaCodeBatchCleaner
     URI MiaCode.UI
     VERSION 1.0
     OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/batch_cleaner_qml/MiaCode/UI"
+    __QT_INTERNAL_DISAMBIGUATE_QMLDIR_RESOURCE
     NO_LINT
     QML_FILES
         ${MIACODE_BATCH_CLEANER_SHARED_QML_FILES}
