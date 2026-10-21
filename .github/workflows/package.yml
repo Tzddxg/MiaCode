@@ -240,8 +240,13 @@ jobs:
               echo "No AppImage found under dist/" >&2
               exit 1
             fi
-            echo "name=$(basename "$APPIMAGE")" >> "$GITHUB_OUTPUT"
-            echo "Artifact name: $(basename "$APPIMAGE")"
+            APPIMAGE_BASENAME="$(basename "$APPIMAGE" .AppImage)"
+            sudo apt-get update -y >/dev/null 2>&1 && sudo apt-get install -y -qq p7zip-full >/dev/null 2>&1 || true
+            pushd "$(dirname "$APPIMAGE")" >/dev/null
+            7z a -mx=9 "${APPIMAGE_BASENAME}.7z" "$(basename "$APPIMAGE")" >/dev/null
+            popd >/dev/null
+            echo "name=${APPIMAGE_BASENAME}.7z" >> "$GITHUB_OUTPUT"
+            echo "Artifact name: ${APPIMAGE_BASENAME}.7z"
           else
             python scripts/build/package.py artifact
           fi
