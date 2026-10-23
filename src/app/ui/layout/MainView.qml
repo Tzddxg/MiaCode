@@ -59,7 +59,7 @@ Item {
 
     ViewState {
         id: state
-        netEnabled: root.pages.netEnabled
+        netUploadEnabled: root.pages.netUploadEnabled
     }
 
     Binding {
@@ -111,7 +111,7 @@ Item {
 
     MainMenuCommands {
         id: menuCommands
-        netEnabled: root.pages.netEnabled
+        netUploadEnabled: root.pages.netUploadEnabled
         commandsEnabled: !root.beginnerGuideActive
         canUndo: root.editorCommandsAvailable && splitView.canUndo
         canRedo: root.editorCommandsAvailable && splitView.canRedo
@@ -119,7 +119,6 @@ Item {
         canCopy: root.editorCommandsAvailable && splitView.canCopy
         canPaste: root.editorCommandsAvailable && splitView.canPaste
         canTransform: root.editorCommandsAvailable && splitView.canTransform
-        canNormalize: root.editorCommandsAvailable && splitView.normalizationAvailable
         renderModeMenuAvailable: splitView.renderModeMenuAvailable
         onExitRequested: root.requestClose()
         onUndoRequested: root.undo()
@@ -152,10 +151,6 @@ Item {
         onChartTransformRequested: opId => {
             if (root.chartEditorActive)
                 root.applyChartTransform(opId)
-        }
-        onNormalizeChartRequested: {
-            if (root.chartEditorActive)
-                root.pages.openNormalizeWholeChart()
         }
         onAboutRequested: preferencesDialog.openPage("about")
         onSetupWizardRequested: setupWizard.open()
@@ -356,7 +351,6 @@ Item {
                 trailingToolAreaWidth: root.platform.nativeMenuBar
                     ? mainToolBar.trailingActionsWidth : 0
                 documentTitle: root.documentTitle
-                normalizationEnabled: root.pages.activePageId !== "export"
             }
 
             MainToolBar {
@@ -411,6 +405,8 @@ Item {
             MainSplitView {
                 id: splitView
                 anchors.fill: parent
+                timelineGuideActive: beginnerGuide.visible
+                    && beginnerGuide.selectedSection.id === "timeline-options"
                 backgroundSource: root.backgroundSource
                 backgroundOffset: root.mapToItem(root.backgroundSource,
                                                  mainViewHost.x, mainViewHost.y)
@@ -787,6 +783,22 @@ Item {
                     { icon: Qt.resolvedUrl("icons/preview-detach.svg"), label: qsTrId("guide.transport.detach") }
                 ],
                 placement: "above",
+                alignment: "end"
+            },
+            {
+                id: "timeline-options",
+                target: splitView.timelineGuideItem,
+                secondaryTarget: splitView.timelineSettingsGuideItem,
+                fallbackTarget: mainToolBar.workspaceActionsItem,
+                hint: qsTrId("guide.timeline.hint"),
+                title: qsTrId("guide.timeline.title"),
+                columns: 1,
+                features: [
+                    { sample: "100%", label: qsTrId("guide.timeline.zoom") },
+                    { icon: Qt.resolvedUrl("icons/sliders-horizontal.svg"), label: qsTrId("guide.timeline.brightness") },
+                    { icon: Qt.resolvedUrl("icons/file.svg"), label: qsTrId("guide.timeline.follow") }
+                ],
+                placement: "right",
                 alignment: "end"
             }
         ])

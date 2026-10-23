@@ -24,7 +24,6 @@ Item {
     property bool editorCommandsEnabled: true
     property bool chartCommandsEnabled: true
     property bool toolCommandsEnabled: true
-    property bool normalizationEnabled: true
     property bool nativeMenuMode: false
     // Re-read each time the menu opens rather than kept live: the list only
     // changes when a document is opened, and a menu nobody is looking at has no
@@ -258,7 +257,7 @@ Item {
             id: majnetButton
             menu: majnetMenu
             menuIndex: 5
-            enabled: root.commandsEnabled && root.commands.netEnabled
+            enabled: root.commandsEnabled
         }
         TopLevelItem {
             id: extrasButton
@@ -496,18 +495,13 @@ Item {
                 documentAvailable: root.documentAvailable
                 onToolRequested: toolId => root.commands.mediaToolRequested(toolId)
             }
-            AppMenuAction {
-                text: qsTrId("qml.normalize_whole_chart")
-                enabled: root.commandsEnabled && root.chartCommandsEnabled
-                         && root.normalizationEnabled && root.commands.canNormalize
-                onTriggered: root.commands.normalizeChartRequested()
-            }
         }
 
         MajnetActionsMenu {
             id: majnetMenu
             title: root.menuTitle(qsTrId("menu.majnet_n"))
-            actionsEnabled: root.commandsEnabled && root.commands.netEnabled
+            actionsEnabled: root.commandsEnabled
+            uploadEnabled: root.commands.netUploadEnabled
             onDownloadRequested: root.commands.netRequested()
             onUploadRequested: root.commands.netUploadRequested()
         }
@@ -580,12 +574,6 @@ Item {
                                          transformItem.modelData.id)
                     }
                 }
-            }
-            AppMenuAction {
-                text: qsTrId("qml.normalize_whole_chart")
-                enabled: root.commandsEnabled && root.chartCommandsEnabled
-                         && root.normalizationEnabled && root.commands.canNormalize
-                onTriggered: root.commands.normalizeChartRequested()
             }
 
             AppMenu {
@@ -663,6 +651,10 @@ Item {
         AppMenu {
             id: extrasMenu
             title: root.menuTitle(qsTrId("menu.extras"))
+            // Cocoa guesses action roles from the leading word (About / Config /
+            // Options / Preference / Setting / Setup / Quit / Exit) and moves the
+            // row into the application menu. The English label therefore starts
+            // with "Beginner", not "Setup"; translations must keep the same rule.
             AppMenuAction {
                 text: qsTrId("setup.wizard")
                 enabled: root.commandsEnabled

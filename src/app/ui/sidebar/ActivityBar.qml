@@ -8,11 +8,9 @@ Rectangle {
 
     property string activeView: "chart"
     property bool documentAvailable: true
-    property bool netEnabled: false
+    property bool netUploadEnabled: false
     property bool networkActive: false
     property bool toolsAvailable: true
-    property bool chartEditorAvailable: true
-    property bool normalizationEnabled: true
     readonly property bool toolsMenuActive: toolsPopup.active
     signal viewRequested(string viewId)
     signal toolRequested(string toolId)
@@ -52,7 +50,6 @@ Rectangle {
             objectName: "majnetActivityButton"
             iconSource: Qt.resolvedUrl("icons/globe.svg")
             tooltip: qsTrId("net.ui.majnet")
-            enabled: root.netEnabled
             selected: root.networkActive || majnetPopup.active
             onClicked: majnetPopup.popup(majnetButton, majnetButton.width, 0)
         }
@@ -75,7 +72,7 @@ Rectangle {
     // Keep the left navigation entry and the top-level Majnet menu identical.
     MajnetActionsMenu {
         id: majnetPopup
-        actionsEnabled: root.netEnabled
+        uploadEnabled: root.netUploadEnabled
         onDownloadRequested: root.toolRequested("net-download")
         onUploadRequested: root.toolRequested("net-upload")
     }
@@ -93,11 +90,6 @@ Rectangle {
             enabled: root.toolsAvailable
             documentAvailable: root.documentAvailable
             onToolRequested: toolId => root.toolRequested("media." + toolId)
-        }
-        AppMenuAction {
-            text: qsTrId("qml.normalize_whole_chart")
-            enabled: root.chartEditorAvailable && root.normalizationEnabled
-            onTriggered: root.toolRequested("normalize")
         }
     }
 
